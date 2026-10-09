@@ -39,7 +39,11 @@ fn has_layer(s: &Session) -> std::result::Result<(), String> {
 }
 fn has_pixel_layer(s: &Session) -> std::result::Result<(), String> {
     let l = crate::active_layer_of(s)?;
-    if matches!(l.content, LayerContent::Raster(_)) { Ok(()) } else { Err(format!("active layer is a {} layer, not a pixel layer", l.content.kind_name())) }
+    if matches!(l.content, LayerContent::Raster(_)) {
+        Ok(())
+    } else {
+        Err(format!("active layer is {} {} layer, not a pixel layer", l.content.article(), l.content.kind_name()))
+    }
 }
 /// A pixel layer, or a targeted alpha channel / Quick Mask (adjustments and fills apply to it).
 fn has_pixel_or_channel(s: &Session) -> std::result::Result<(), String> {
@@ -57,7 +61,7 @@ pub(crate) fn has_paintable(s: &Session) -> std::result::Result<(), String> {
     if matches!(l.content, LayerContent::Raster(_)) || l.mask.is_some() {
         Ok(())
     } else {
-        Err(format!("active layer is a {} layer without a mask", l.content.kind_name()))
+        Err(format!("active layer is {} {} layer without a mask", l.content.article(), l.content.kind_name()))
     }
 }
 
@@ -114,12 +118,33 @@ macro_rules! cmd {
 }
 
 pub fn command_specs() -> &'static [CommandSpec] {
-    static SPECS: std::sync::OnceLock<Vec<CommandSpec>> = std::sync::OnceLock::new();
-    SPECS.get_or_init(build)
+    &registry().specs
 }
 
 pub fn find(id: &str) -> Option<&'static CommandSpec> {
-    command_specs().iter().find(|c| c.id == id)
+    let registry = registry();
+    registry.by_id.get(id).and_then(|&index| registry.specs.get(index))
+}
+
+struct Registry {
+    specs: Vec<CommandSpec>,
+    by_id: std::collections::HashMap<&'static str, usize>,
+}
+
+impl Registry {
+    fn new(specs: Vec<CommandSpec>) -> Self {
+        let mut by_id = std::collections::HashMap::with_capacity(specs.len());
+        for (index, spec) in specs.iter().enumerate() {
+            // Preserve the linear lookup's first-match behavior if an id is duplicated.
+            by_id.entry(spec.id).or_insert(index);
+        }
+        Self { specs, by_id }
+    }
+}
+
+fn registry() -> &'static Registry {
+    static REGISTRY: std::sync::OnceLock<Registry> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| Registry::new(build()))
 }
 
 // ---------- param helpers ----------
@@ -868,8 +893,13 @@ fn build() -> Vec<CommandSpec> {
             params: r##"{"document":index?}"##,
             enabled: has_doc,
             run: |s, p| {
-                let i = p.get("document").and_then(Value::as_u64).map(|v| v as usize).or(s.active_index()).ok_or(EngineError::NoDocument)?;
-                let d = s.documents().get(i).ok_or(EngineError::NoDocument)?;
+                let d = match p.get("document") {
+                    Some(v) => {
+                        let i = v.as_u64().and_then(|v| usize::try_from(v).ok()).ok_or_else(|| bad("document.inspect", "`document` must be an index"))?;
+                        s.documents().get(i).ok_or_else(|| EngineError::Other(format!("no document at index {i}")))?
+                    }
+                    None => s.active().ok_or(EngineError::NoDocument)?,
+                };
                 Ok(inspect::document(d))
             },
             journal: false,
@@ -883,7 +913,8 @@ fn build() -> Vec<CommandSpec> {
             enabled: has_doc,
             run: |s, p| {
                 let i = p.get("document").and_then(Value::as_u64).ok_or_else(|| bad("document.activate", "missing `document`"))?;
-                if s.set_active(i as usize) { Ok(Value::Null) } else { Err(EngineError::NoDocument) }
+                let idx = usize::try_from(i).map_err(|_| bad("document.activate", "`document` out of range"))?;
+                if s.set_active(idx) { Ok(Value::Null) } else { Err(EngineError::Other(format!("no document at index {idx}"))) }
             },
             journal: false,
         },
@@ -1134,6 +1165,7 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::plugin_cmds::specs());
     v.extend(crate::group_view_cmds::specs());
     v.extend(crate::fx_view_cmds::specs());
+    v.extend(crate::fx_visibility_cmds::specs());
     v.extend(crate::mask_view_cmds::specs());
     v.extend(crate::actions_cmds::specs());
     v
@@ -1262,4 +1294,21 @@ pub(crate) fn layer_copy(doc: &Document, id: LayerId) -> Result<Layer> {
         dup.locks = Default::default();
     }
     Ok(dup)
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_ids_keep_the_first_spec_and_listing_order() {
+        let mut built = build().into_iter();
+        let first = built.next().unwrap();
+        let mut second = built.next().unwrap();
+        let id = first.id;
+        second.id = id;
+        let registry = Registry::new(vec![first, second]);
+        assert_eq!(registry.by_id.get(id), Some(&0));
+        assert_eq!(registry.specs.len(), 2);
+    }
 }
