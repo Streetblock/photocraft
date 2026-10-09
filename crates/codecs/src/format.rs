@@ -56,8 +56,8 @@ pub struct FormatCaps {
 pub const ASYMMETRIC_EXCEPTIONS: &[(Format, &str)] = &[
     (
         Format::Avif,
-        "AVIF encode uses ravif (pure Rust) but decoding requires dav1d (C); read stays unsupported \
-         until a pure-Rust AV1 decoder is viable. Only enabled with the non-default `avif` feature.",
+        "AVIF encoding uses ravif (pure Rust); this crate does not enable the `image` AVIF decoder, \
+         which requires dav1d (C). The `avif` feature is non-default in this crate.",
     ),
     (
         Format::Heif,
