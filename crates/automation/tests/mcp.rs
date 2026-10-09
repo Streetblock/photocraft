@@ -202,6 +202,37 @@ async fn command_ids_in_tool_schemas_exist() {
     client.cancel().await.unwrap();
 }
 
+/// `UI_SET_FIELDS` in `crates/ui-egui/src/control.rs`, read from source. The desktop shell owns the
+/// list; this crate describes it over MCP without depending on the UI crate (both are L6).
+/// Anchored on the declaration, not on the doc comment that mentions it first, and checked against
+/// the declared array length so a mis-parse fails loudly instead of testing the wrong names.
+fn ui_set_fields() -> Vec<String> {
+    let src = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui-egui/src/control.rs")).expect("ui-egui control.rs");
+    let (_, rest) = src.split_once("UI_SET_FIELDS: [&str; ").expect("UI_SET_FIELDS is declared");
+    let declared: usize = rest.split_once(']').expect("declared length").0.parse().expect("declared length");
+    let body = rest.split_once('[').expect("field array").1.split_once("];").expect("terminated array").0;
+    let fields: Vec<String> = body.split('"').skip(1).step_by(2).map(str::to_string).collect();
+    assert_eq!(fields.len(), declared, "parsed {fields:?} from UI_SET_FIELDS; its source shape changed");
+    fields
+}
+
+/// #1548: `ui_set` must name every field `ui.set` accepts. An agent copies this list out of
+/// `tools/list`, and it ends "Other fields are an error", so an omission reads as a rejection of
+/// a field that in fact works. This guards the whole list against future drift, not only the
+/// three fields missing when the issue was filed.
+#[tokio::test(flavor = "multi_thread")]
+async fn ui_set_description_names_every_accepted_field() {
+    let client = connect(PhotocraftMcp::headless()).await;
+    let tools = client.list_all_tools().await.unwrap();
+    let tool = tools.iter().find(|t| t.name == "ui_set").expect("ui_set tool");
+    let schema = Value::Object((*tool.input_schema).clone());
+    let description = schema["properties"]["fields"]["description"].as_str().expect("ui_set fields description").to_string();
+    for field in ui_set_fields() {
+        assert!(description.contains(&field), "ui_set's description omits `{field}`, which ui.set accepts:\n{description}");
+    }
+    client.cancel().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn errors_are_tool_errors_not_crashes() {
     let client = connect(PhotocraftMcp::headless()).await;
@@ -255,6 +286,20 @@ async fn bridge_doc_save_rejects_headless_only_options_instead_of_saving_with_de
         assert_eq!(r.is_error, Some(true), "{params}: {:?}", text(&r));
         assert!(text(&r).contains("headless"), "{params}: {}", text(&r));
     }
+}
+
+/// #946: like headless mode, a bridged `doc_save` without `path` reaches the app's `app.save`,
+/// which writes back to the document's own PSD, PSB or .pcraft file or refuses with its own error.
+#[tokio::test(flavor = "multi_thread")]
+async fn bridge_doc_save_without_path_forwards_app_save_for_write_back() {
+    let (addr, app) = fake_app().await;
+    let client = connect(PhotocraftMcp::bridge(&addr, CONTROL_TOKEN).unwrap()).await;
+    let saved = json_of(&call(&client, "doc_save", json!({})).await);
+    assert_eq!(saved, json!({"saved": {}}), "no `path` is sent, not even null");
+    let saved = json_of(&call(&client, "doc_save", json!({"path": "out.psd"})).await);
+    assert_eq!(saved, json!({"saved": {"path": "out.psd"}}));
+    client.cancel().await.unwrap();
+    app.abort();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -333,6 +378,49 @@ fn write_image(dir: &std::path::Path, name: &str, format: photocraft_codecs::For
     let bytes = photocraft_codecs::encode(&img, format, &Default::default()).unwrap();
     std::fs::write(dir.join(name), &bytes).unwrap();
     bytes
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn affinity_preview_warns_and_requires_a_new_save_path() {
+    let dir = tmp("affinity-preview");
+    let png = write_image(&dir, "preview.png", photocraft_codecs::Format::Png);
+    // Synthetic v12 envelope; the native document graph is intentionally absent.
+    let mut bytes = vec![0; 72];
+    bytes[..4].copy_from_slice(b"\x00\xffKA");
+    bytes[4..6].copy_from_slice(&12u16.to_le_bytes());
+    bytes[8..12].copy_from_slice(b"nsrP");
+    bytes[12..16].copy_from_slice(b"#Inf");
+    bytes[24..32].copy_from_slice(&72u64.to_le_bytes());
+    bytes[64..68].copy_from_slice(b"Prot");
+    bytes.extend(b"\xff\xff\xff\xffThmb");
+    bytes.extend(1u32.to_le_bytes());
+    bytes.extend((png.len() as u32 + 13).to_le_bytes());
+    bytes.extend(29u32.to_le_bytes());
+    bytes.extend(0u32.to_le_bytes());
+    bytes.extend((png.len() as u32).to_le_bytes());
+    bytes.push(1);
+    bytes.extend(png);
+    std::fs::write(dir.join("source.af"), &bytes).unwrap();
+    // A renamed layered extension must not bypass source protection.
+    std::fs::write(dir.join("renamed.psd"), &bytes).unwrap();
+    let client = connect(headless_in(&dir)).await;
+    for name in ["source.af", "renamed.psd"] {
+        let opened = json_of(&call(&client, "doc_open", json!({"path": name})).await);
+        assert!(opened["warnings"].to_string().contains("only its embedded 16×8 PNG preview"));
+        assert_eq!(opened["width"], 16);
+        let refused = call(&client, "doc_save", json!({})).await;
+        assert_eq!(refused.is_error, Some(true), "{}", text(&refused));
+        assert!(text(&refused).contains("pass `path`"), "{}", text(&refused));
+        let native = call(&client, "doc_save", json!({"path": "source.af"})).await;
+        assert_eq!(native.is_error, Some(true));
+        assert!(text(&native).contains("Affinity export"));
+        assert_eq!(std::fs::read(dir.join(name)).unwrap(), bytes);
+    }
+    json_of(&call(&client, "doc_save", json!({"path": "copy.pcraft"})).await);
+    assert_eq!(json_of(&call(&client, "doc_save", json!({})).await)["path"], "copy.pcraft");
+    assert_eq!(std::fs::read(dir.join("source.af")).unwrap(), bytes);
+    client.cancel().await.unwrap();
+    cleanup(&dir);
 }
 
 /// A save without `path` writes back only to a layered file in its own format (#416).
@@ -455,6 +543,7 @@ async fn fake_app_with_screenshot(screenshot_png: Option<Vec<u8>>) -> (String, t
                 "engine.execute" => {
                     json!({"id": id, "ok": true, "result": {"ran": req["params"]["command"], "params": req["params"]["params"], "wait": req["params"]["wait"]}})
                 }
+                "app.save" => json!({"id": id, "ok": true, "result": {"saved": req["params"]}}),
                 "engine.commands" => {
                     json!({"id": id, "ok": true, "result": [{"id": "file.new", "label": "New…", "enabled": true}]})
                 }

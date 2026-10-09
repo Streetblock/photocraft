@@ -488,10 +488,33 @@ fn eyedropper_and_alt_sampling_show_a_pipette() {
     h.event(egui::Event::ModifiersChanged(Modifiers::ALT));
     assert_eq!(cursor(&mut h), egui::CursorIcon::None, "⌥ samples with a pipette");
     h.state_mut().run("prefs.set", json!({"values": {"cursors.other": "precise"}})).unwrap();
-    // Windows draws the crosshair on the canvas and hides the OS cursor (`visible_crosshair`).
-    let crosshair = if cfg!(target_os = "windows") { egui::CursorIcon::None } else { egui::CursorIcon::Crosshair };
-    assert_eq!(cursor(&mut h), crosshair, "Precise keeps the crosshair");
+    // Every platform reports the crosshair. Windows also hands the OS a black-and-white bitmap
+    // for it (`tool_cursor`, #1160), with `Crosshair` underneath as the fallback.
+    let precise = |h: &mut Harness<'static, PhotocraftApp>| {
+        let icon = cursor(h);
+        (icon, h.output().platform_output.cursor_image.is_some())
+    };
+    let windows = cfg!(target_os = "windows");
+    assert_eq!(precise(&mut h), (egui::CursorIcon::Crosshair, windows), "Precise keeps the crosshair");
     h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
     h.state_mut().ui.tool = crate::state::Tool::Eyedropper;
-    assert_eq!(cursor(&mut h), crosshair);
+    assert_eq!(precise(&mut h), (egui::CursorIcon::Crosshair, windows));
+}
+
+/// Esc while drawing with the Pen ends the path where it is, left open, and keeps it as the work
+/// path, as ↩ does; it used to throw the path away (#1769).
+#[test]
+fn esc_ends_a_pen_path_and_keeps_it() {
+    let mut h = harness();
+    h.state_mut().ui.tool = crate::state::Tool::Pen;
+    h.state_mut().ui.pen = Some(crate::vector_ui::PenPath { knots: vec![[[50.0, 50.0]; 3], [[150.0, 50.0]; 3], [[150.0, 120.0]; 3]], ..Default::default() });
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert!(h.state().ui.pen.is_none(), "the Pen leaves drawing state");
+    let doc = &h.state().session.active().unwrap().doc;
+    let path = doc.work_path.as_ref().expect("the path is kept as the work path");
+    assert_eq!(path.subpaths.len(), 1);
+    assert!(!path.subpaths[0].closed, "left open");
+    assert_eq!(path.subpaths[0].knots.len(), 3);
+    assert_eq!(h.state().ui.selected_path.as_deref(), Some("work"));
 }
