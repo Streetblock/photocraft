@@ -649,8 +649,8 @@
 	4-up	4-fach
 	6-up	6-fach
 	Consolidate All to Tabs	Alle in Registerkarten zusammenfassen
-	Float in Window	In separatem Fenster anzeigen
-	Float All in Windows	Alle in separaten Fenstern anzeigen
+	Float in Window	In Fenster schweben lassen
+	Float All in Windows	Alle in Fenstern schweben lassen
 	New Window for Document	Neues Fenster für Dokument
 	Workspace	Arbeitsbereich
 	Essentials	Essentials
@@ -791,7 +791,7 @@
 	Bilinear	Bilinear
 	Black	Schwarz
 	Black & White	Schwarzweiß
-	Black Point Compensation	Schwarzpunktkompensation
+	Black Point Compensation	Tiefenkompensierung
 	Black, White	Schwarz, Weiß
 	Blacks	Schwarz
 	Blending	Überblenden
@@ -1583,7 +1583,7 @@
 	Link with Layer	Mit Ebene verknüpfen
 	Lorem Ipsum	Lorem Ipsum
 	Magentas	Magentatöne
-	Magic Eraser Tool	Zauberradiergummi
+	Magic Eraser Tool	Magischer-Radiergummi-Werkzeug
 	Magic Wand Tool	Zauberstab-Werkzeug
 	Marquee	Auswahlrahmen
 	Mean:	Mittelwert:
@@ -2148,7 +2148,7 @@
 	Drag or click polygon points · hold Alt during lasso for straight segments · {add} add · {sub} before drawing subtracts	Ziehen oder Polygonpunkte klicken · Alt während des Lassos halten für gerade Segmente · {add} hinzufügen · {sub} vor dem Zeichnen zieht ab
 	Extend	Erweitern
 	Structure:	Struktur:
-	Content-Aware Move Tool	Inhaltsbasiert verschieben
+	Content-Aware Move Tool	Inhaltsbasiert-verschieben-Werkzeug
 	TIFF Options	TIFF-Optionen
 	Including layers will increase file size.	Das Einbeziehen von Ebenen vergrößert die Datei.
 	Discard Layers and Save a Copy	Ebenen verwerfen und Kopie speichern
@@ -2284,6 +2284,6 @@ fontWeight	Italic	Kursiv
 	Pattern Stamp	Musterstempel
 	Impressionist	Impressionistisch
 	Rotate View	Ansicht drehen
-	Rotate View Tool	Ansicht drehen
+	Rotate View Tool	Ansicht-drehen-Werkzeug
 	Reset View	Ansicht zurücksetzen
 	Drag around the centre to rotate the view  ·  Shift constrains to 15°	Ansicht drehen: im Bogen ziehen · Umschalt: 15°-Schritte
