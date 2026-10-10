@@ -279,19 +279,56 @@ fn cmyk_conversion_discards_the_incompatible_icc_profile() {
 #[test]
 fn quality_eighty_uses_nine_seven_and_reaches_a_measured_psnr_floor() {
     for sample in SAMPLES {
-        for noise in [0.0, 1.0] {
-            let image = synth(37, 23, ChannelLayout::Rgb, sample, 0x1047, noise);
-            for raw in [false, true] {
-                let opts = EncodeOptions { jpeg2000_quality: Some(80), jpeg2000_codestream: raw, ..Default::default() };
-                assert_eq!(fidelity_warnings_with(&image, Format::Jpeg2000, &opts), vec![FidelityWarning::LossyCompression]);
-                let bytes = encode(&image, Format::Jpeg2000, &opts).unwrap();
-                assert_coding(&bytes, false, true);
-                let decoded = decode(&bytes).unwrap();
-                assert_eq!(decoded.sample_type(), sample);
-                assert_eq!(decoded.layout(), image.layout());
-                let measured = psnr(&image, &decoded);
-                assert!(measured >= 35.0, "{sample:?}, noise {noise}, raw {raw}: PSNR {measured:.3} dB");
+        for layout in LAYOUTS {
+            for noise in [0.0, 1.0] {
+                let image = synth(37, 23, layout, sample, 0x1047, noise);
+                for raw in [false, true] {
+                    let opts = EncodeOptions { jpeg2000_quality: Some(80), jpeg2000_codestream: raw, ..Default::default() };
+                    assert_eq!(fidelity_warnings_with(&image, Format::Jpeg2000, &opts), vec![FidelityWarning::LossyCompression]);
+                    let bytes = encode(&image, Format::Jpeg2000, &opts).unwrap();
+                    assert_coding(&bytes, false, matches!(layout, ChannelLayout::Rgb | ChannelLayout::Rgba));
+                    let decoded = decode(&bytes).unwrap();
+                    assert_eq!(decoded.sample_type(), sample);
+                    assert_eq!(decoded.layout(), image.layout());
+                    let measured = psnr(&image, &decoded);
+                    assert!(measured >= 35.0, "{layout:?} {sample:?}, noise {noise}, raw {raw}: PSNR {measured:.3} dB");
+                }
             }
+        }
+    }
+}
+
+#[test]
+fn quality_endpoints_produce_valid_native_depth_streams_with_rate_allocation() {
+    for layout in LAYOUTS {
+        for sample in SAMPLES {
+            let image = native_image(37, 23, layout, sample);
+            let mut previous = None;
+            for q in [1, 100] {
+                let opts = EncodeOptions { jpeg2000_quality: Some(q), jpeg2000_codestream: true, ..Default::default() };
+                let bytes = encode(&image, Format::Jpeg2000, &opts).unwrap();
+                assert_coding(&bytes, false, matches!(layout, ChannelLayout::Rgb | ChannelLayout::Rgba));
+                let decoded = decode(&bytes).unwrap();
+                assert_eq!(decoded.dimensions(), image.dimensions());
+                assert_eq!(decoded.layout(), layout);
+                assert_eq!(decoded.sample_type(), sample);
+                let measured = psnr(&image, &decoded);
+                if q == 1 {
+                    assert!(bytes.len() <= 512 + image.data().len() / 10_000);
+                } else {
+                    assert!(bytes.len() <= 512 + image.data().len());
+                    let (length, low_psnr) = previous.unwrap();
+                    assert!(bytes.len() >= length);
+                    assert!(measured >= low_psnr);
+                }
+                previous = Some((bytes.len(), measured));
+            }
+            let tiny = native_image(1, 1, layout, sample);
+            let opts = EncodeOptions { jpeg2000_quality: Some(1), ..Default::default() };
+            let decoded = decode(&encode(&tiny, Format::Jpeg2000, &opts).unwrap()).unwrap();
+            assert_eq!(decoded.dimensions(), (1, 1));
+            assert_eq!(decoded.layout(), layout);
+            assert_eq!(decoded.sample_type(), sample);
         }
     }
 }

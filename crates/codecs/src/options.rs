@@ -116,7 +116,8 @@ pub struct EncodeOptions {
     /// JPEG 2000 writes JP2 by default; true writes a bare J2K/J2C codestream without ICC/DPI.
     pub jpeg2000_codestream: bool,
     /// JPEG 2000: None is lossless 5/3; Some(1..=100) requests lossy 9/7.
-    /// Quality maps to a target PSNR of 20 + quality / 4 dB, not a compression ratio.
+    /// Targets 512 + native sample bytes * (quality / 100)^2 codestream bytes.
+    /// Container metadata is additional; structural headers can exceed a tiny target.
     pub jpeg2000_quality: Option<u8>,
     pub png_compression: PngCompression,
     /// Write Adam7-interlaced PNG.

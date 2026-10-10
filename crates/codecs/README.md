@@ -66,8 +66,9 @@ the same.
 * **JPEG 2000.** The first slice reads unsigned full-resolution components with a common
   precision of 1–16 bits, scaled to U8/U16, and writes lossless 8-/16-bit Gray/GrayA/RGB/RGBA.
   JP2 retains ICC and capture resolution; raw J2K/J2C drops them with export warnings.
-  `jpeg2000_quality: Some(1..=100)` requests lossy 9/7 at a target PSNR of
-  `20 + quality / 4` dB; default encoding is reversible 5/3. Palettes, signed/subsampled/mixed
+  `jpeg2000_quality: Some(1..=100)` requests lossy 9/7 with a codestream byte budget of
+  `512 + native sample bytes * (quality / 100)^2`; default encoding is reversible 5/3.
+  Palettes, signed/subsampled/mixed
   components, non-Gray/RGB colour spaces and additional coding tools are explicitly unsupported.
   EXIF/XMP are not retained. Independent container/header checks bound packet/block work before
   decoding; the component-plane budget alone is not a total memory cap. See

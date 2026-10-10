@@ -17,6 +17,13 @@ const SOT: u16 = 0xff90;
 const SOD: u16 = 0xff93;
 const EOC: u16 = 0xffd9;
 
+// Tier-1 and midpoint reconstruction bound band coefficients by 2^Mb - 1.
+// For B = 2^22 - 1, one 2D 5/3 level increases the carried LL bound by
+// B + ceil(B/2) + H + ceil(H/2), where H = 2B + ceil(B/2). At 32 levels
+// this bounds samples by 708,837,247; RCT and a 16-bit DC shift stay below
+// 1,772,125,886. The backend's unchecked i32 lifting sums fit as well.
+const MAX_REVERSIBLE_MAGNITUDE_BITS: u8 = 22;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Info {
     pub width: u32,
@@ -421,7 +428,9 @@ fn other_marker(marker: u16, payload: &[u8], tile: bool, budget: &mut Budget<'_>
             }
             Ok(())
         }
-        0xff5c | 0xff5d | 0xff64 => Ok(()), // QCD, QCC, COM.
+        0xff5c => quantization(payload, false), // QCD.
+        0xff5d => quantization(payload, true),  // QCC.
+        0xff64 => Ok(()),                       // COM.
         // One-byte packet lengths can expand to retained u64 entries and
         // temporary concatenation tables. TLM has similar copied bookkeeping.
         0xff58 if tile => budget.add(u64::try_from(payload.len()).map_err(|_| overflow())?, 32),
@@ -429,6 +438,28 @@ fn other_marker(marker: u16, payload: &[u8], tile: bool, budget: &mut Budget<'_>
         0xff63 if !tile => Ok(()), // CRG.
         _ => Err(unsupported(format!("header marker {marker:#06x} is not supported"))),
     }
+}
+
+fn quantization(payload: &[u8], component: bool) -> Result<(), CodecError> {
+    // SIZ is limited to four components, so QCC has a one-byte component index.
+    let position = usize::from(component);
+    let sq = byte(payload, position)?;
+    if sq & 0x1f != 0 {
+        // Scalar-derived/expounded quantization uses the floating-point 9/7
+        // path. The backend validates the style and its pairing with COD/COC.
+        return Ok(());
+    }
+    let entries = payload.get(position + 1..).filter(|entries| !entries.is_empty()).ok_or_else(|| malformed("missing reversible quantization entries"))?;
+    let guard = sq >> 5;
+    for &entry in entries {
+        let bits = guard.checked_add(entry >> 3).and_then(|sum| sum.checked_sub(1)).ok_or_else(|| malformed("invalid reversible magnitude bit count"))?;
+        if bits > MAX_REVERSIBLE_MAGNITUDE_BITS {
+            return Err(unsupported("reversible quantization exceeds 22 magnitude bits"));
+        }
+    }
+    // Check every main/tile table, including overridden ones. This bounds every
+    // effective band without duplicating QCD/QCC precedence in the marker walk.
+    Ok(())
 }
 
 fn entropy_end(data: &[u8], mut position: usize) -> Result<usize, CodecError> {
@@ -550,6 +581,93 @@ mod tests {
         }
         image.extend_from_slice(&EOC.to_be_bytes());
         assert_eq!(check(&image, &Limits::default()).unwrap().width, 17);
+    }
+
+    #[test]
+    fn bounds_every_reversible_main_and_tile_quantization_table() {
+        for marker in [0xff5c, 0xff5d] {
+            for in_tile in [false, true] {
+                for (guard, epsilon, supported) in [(2, 21, true), (2, 22, false), (7, 16, true), (7, 17, false)] {
+                    let mut image = header(8, 8, 3, 16, (8, 8), 1, 1, &[]);
+                    image.truncate(image.len() - 6); // Replace the helper's QCD.
+                    let mut table = vec![guard << 5, 8 << 3, 8 << 3, 8 << 3, epsilon << 3];
+                    if marker == 0xff5d {
+                        table.insert(0, 0); // QCC component zero.
+                    }
+                    if marker == 0xff5c && !in_tile {
+                        segment(&mut image, marker, &table);
+                    } else {
+                        segment(&mut image, 0xff5c, &[0x40, 16 << 3, 17 << 3, 17 << 3, 18 << 3]);
+                        if !in_tile {
+                            segment(&mut image, marker, &table);
+                        }
+                    }
+                    let image = if in_tile {
+                        let mut extra = Vec::new();
+                        segment(&mut extra, marker, &table);
+                        tile(&mut image, 0, false, &extra);
+                        image.extend_from_slice(&EOC.to_be_bytes());
+                        image
+                    } else {
+                        finish(image)
+                    };
+                    let result = check(&image, &Limits::default());
+                    if supported {
+                        assert!(result.is_ok(), "marker={marker:#06x}, tile={in_tile}, G={guard}, epsilon={epsilon}: {result:?}");
+                    } else {
+                        assert!(
+                            matches!(result, Err(CodecError::Unsupported { .. })),
+                            "marker={marker:#06x}, tile={in_tile}, G={guard}, epsilon={epsilon}: {result:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn accepts_native_sixteen_bit_rct_tables_at_the_wavelet_level_limit() {
+        let mut image = header(1, 1, 3, 16, (1, 1), 1, 32, &[]);
+        image.truncate(image.len() - 6);
+        let mut luma = vec![0x40, 16 << 3];
+        let mut chroma = vec![0x40, 17 << 3];
+        for _ in 0..32 {
+            luma.extend_from_slice(&[17 << 3, 17 << 3, 18 << 3]);
+            chroma.extend_from_slice(&[18 << 3, 18 << 3, 19 << 3]);
+        }
+        segment(&mut image, 0xff5c, &luma);
+        for component in [1, 2] {
+            let mut table = vec![component];
+            table.extend_from_slice(&chroma);
+            segment(&mut image, 0xff5d, &table);
+        }
+        assert!(check(&finish(image), &Limits::default()).is_ok());
+    }
+
+    #[test]
+    fn leaves_irreversible_quantization_headroom_unchanged() {
+        let mut image = header(1, 1, 1, 16, (1, 1), 1, 0, &[]);
+        image.truncate(image.len() - 6);
+        let cod = image.windows(2).position(|bytes| bytes == COD.to_be_bytes()).unwrap();
+        image[cod + 13] = 0; // Irreversible 9/7 kernel.
+        // The native 16-bit lossy encoder's additional fine bits can exceed
+        // the reversible cap; scalar quantization must retain that headroom.
+        for style in [1, 2] {
+            let mut candidate = image.clone();
+            let step = (25_u16 << 11).to_be_bytes();
+            segment(&mut candidate, 0xff5c, &[0x40 | style, step[0], step[1]]);
+            assert!(check(&finish(candidate), &Limits::default()).is_ok());
+        }
+    }
+
+    #[test]
+    fn rejects_missing_and_underflowing_reversible_quantization_entries() {
+        for payload in [&[][..], &[0][..], &[0, 0][..]] {
+            assert!(matches!(quantization(payload, false), Err(CodecError::Malformed { .. })));
+        }
+        for payload in [&[0][..], &[0, 0][..], &[0, 0, 0][..]] {
+            assert!(matches!(quantization(payload, true), Err(CodecError::Malformed { .. })));
+        }
     }
 
     #[test]

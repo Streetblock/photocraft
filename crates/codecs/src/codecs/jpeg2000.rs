@@ -450,8 +450,14 @@ pub(crate) fn encode(image: &Image, plan: Plan, opts: &EncodeOptions) -> Result<
     let packed = j2k::Jpeg2000Image::packed(image.width(), image.height(), format, data).map_err(|e| CodecError::encode(F, e))?;
     let mut options = j2k::EncodeOptions::new().with_container(Container::J2k);
     if let Some(q) = opts.jpeg2000_quality {
-        // A PSNR target is a measurable quality policy; this is not a libjpeg quality scale.
-        options = options.with_lossy(6).with_target_psnr(20.0 + f64::from(q) / 4.0);
+        // One encoding pass with rate allocation; a PSNR search would repeatedly decode
+        // full-size candidates. This is our byte-budget policy, not libjpeg's scale.
+        let squared = usize::from(q).pow(2);
+        let len = converted.data().len();
+        // Split before multiplying so the intermediate cannot overflow for q <= 100.
+        let target = (len / 10_000) * squared + (len % 10_000) * squared / 10_000;
+        let target = target.checked_add(512).ok_or_else(|| CodecError::encode(F, "JPEG 2000 byte budget overflow"))?;
+        options = options.with_lossy(6).with_target_bytes(target);
     }
     let stream = std::panic::catch_unwind(|| j2k::encode(&packed, &options))
         .map_err(|_| CodecError::encode(F, "JPEG 2000 backend rejected the image"))?
