@@ -113,6 +113,11 @@ pub struct EncodeOptions {
     pub jpeg_quality: u8,
     /// JPEG 4:2:0 chroma subsampling (`false` = 4:4:4).
     pub jpeg_chroma_subsampling: bool,
+    /// JPEG 2000 writes JP2 by default; true writes a bare J2K/J2C codestream without ICC/DPI.
+    pub jpeg2000_codestream: bool,
+    /// JPEG 2000: None is lossless 5/3; Some(1..=100) requests lossy 9/7.
+    /// Quality maps to a target PSNR of 20 + quality / 4 dB, not a compression ratio.
+    pub jpeg2000_quality: Option<u8>,
     pub png_compression: PngCompression,
     /// Write Adam7-interlaced PNG.
     pub png_interlaced: bool,
@@ -137,6 +142,8 @@ impl Default for EncodeOptions {
         EncodeOptions {
             jpeg_quality: 90,
             jpeg_chroma_subsampling: true,
+            jpeg2000_codestream: false,
+            jpeg2000_quality: None,
             png_compression: PngCompression::Default,
             png_interlaced: false,
             webp_lossless: true,

@@ -2315,6 +2315,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hayro-jpeg2000"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "122c5f834c37a2260b9c851bb8be685cf539b2a8b94b704a931ef7d2525d5835"
+
+[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4019,6 +4025,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-jpeg2000"
+version = "0.0.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ff7a682a941fb351fbb7c45ff7abdd81f2946a61dd56af7fadec5d17f8023f0"
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4286,9 +4298,11 @@ dependencies = [
  "exr",
  "flate2",
  "half",
+ "hayro-jpeg2000",
  "image",
  "image-webp",
  "jpeg-encoder",
+ "oxideav-jpeg2000",
  "photocraft-heif",
  "png 0.18.1",
  "proptest",
