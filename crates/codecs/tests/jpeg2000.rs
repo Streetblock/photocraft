@@ -438,7 +438,7 @@ fn only_jp2_compatible_jpx_is_accepted() {
     let ftyp = box_range(&bytes, b"ftyp", 12);
     bytes[ftyp.start + 8..ftyp.start + 12].copy_from_slice(b"jpx ");
     assert_eq!(decode(&bytes).unwrap().data(), image.data());
-    bytes[ftyp.start + 16..ftyp.end].chunks_exact_mut(4).for_each(|brand| brand.copy_from_slice(b"jpx "));
+    bytes[ftyp.start + 16..ftyp.end].as_chunks_mut::<4>().0.iter_mut().for_each(|brand| brand.copy_from_slice(b"jpx "));
     assert!(matches!(decode(&bytes), Err(CodecError::Unsupported { format: Format::Jpeg2000, .. })));
 }
 

@@ -209,7 +209,7 @@ fn container<'a>(bytes: &'a [u8], limits: &Limits) -> Result<ContainerInfo<'a>, 
                 if brands.len() % 4 != 0 {
                     return Err(malformed("JP2 compatibility list"));
                 }
-                compatible = brands.chunks_exact(4).any(|b| b == b"jp2 ");
+                compatible = brands.as_chunks::<4>().0.iter().any(|b| b == b"jp2 ");
             }
             b"jp2c" => {
                 if header.is_none() {
@@ -269,7 +269,7 @@ fn container<'a>(bytes: &'a [u8], limits: &Limits) -> Result<ContainerInfo<'a>, 
                                 return Err(malformed("JP2 channel definition count"));
                             }
                             let mut definitions = [(0, 0, 0); 4];
-                            for (slot, entry) in definitions.iter_mut().zip(data.get(2..).ok_or_else(|| malformed("JP2 channels"))?.chunks_exact(6)) {
+                            for (slot, entry) in definitions.iter_mut().zip(data.get(2..).ok_or_else(|| malformed("JP2 channels"))?.as_chunks::<6>().0) {
                                 let word = |at| -> Result<u16, CodecError> {
                                     Ok(u16::from_be_bytes(
                                         entry.get(at..at + 2).and_then(|v| v.try_into().ok()).ok_or_else(|| malformed("JP2 channel definition"))?,
@@ -380,8 +380,8 @@ pub(crate) fn decode(bytes: &[u8], limits: &Limits) -> Result<Image, CodecError>
             *v = ((u32::from(*v) * 255 + max / 2) / max) as u8;
         }
     } else {
-        for word in data.chunks_exact_mut(2) {
-            let value = u16::from_le_bytes(word.try_into().map_err(|_| malformed("JPEG 2000 sample word"))?);
+        for word in data.as_chunks_mut::<2>().0 {
+            let value = u16::from_le_bytes(*word);
             if u32::from(value) > max {
                 return Err(malformed("JPEG 2000 sample exceeds its precision"));
             }
@@ -442,8 +442,8 @@ pub(crate) fn encode(image: &Image, plan: Plan, opts: &EncodeOptions) -> Result<
     };
     let mut data = copy_bytes(converted.data())?;
     if plan.sample == S::U16 {
-        for word in data.chunks_exact_mut(2) {
-            let v = u16::from_ne_bytes(word.try_into().map_err(|_| CodecError::encode(F, "invalid 16-bit sample"))?);
+        for word in data.as_chunks_mut::<2>().0 {
+            let v = u16::from_ne_bytes(*word);
             word.copy_from_slice(&v.to_le_bytes());
         }
     }

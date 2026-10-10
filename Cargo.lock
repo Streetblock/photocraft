@@ -4027,8 +4027,7 @@ dependencies = [
 [[package]]
 name = "oxideav-jpeg2000"
 version = "0.0.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ff7a682a941fb351fbb7c45ff7abdd81f2946a61dd56af7fadec5d17f8023f0"
+source = "git+https://github.com/Streetblock/oxideav-jpeg2000?rev=2c41bb8308b5c8b171796a635b584cd55be58224#2c41bb8308b5c8b171796a635b584cd55be58224"
 
 [[package]]
 name = "parking"
