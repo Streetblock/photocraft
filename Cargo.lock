@@ -4465,7 +4465,7 @@ dependencies = [
 [[package]]
 name = "oxideav-jpeg2000"
 version = "0.0.17"
-source = "git+https://github.com/Streetblock/oxideav-jpeg2000?rev=c61387382c2335143c7717ea578724fbe37e9b2b#c61387382c2335143c7717ea578724fbe37e9b2b"
+source = "git+https://github.com/Streetblock/oxideav-jpeg2000?rev=a119c849be69d3ff521f0873ca1d5cd78250ad02#a119c849be69d3ff521f0873ca1d5cd78250ad02"
 
 [[package]]
 name = "parking"
