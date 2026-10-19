@@ -145,7 +145,11 @@ pub(crate) fn with_chosen_type(path: &Path, opened_with: Option<&str>, chosen: &
     match ext {
         Some(ext) if chosen.contains(&ext) => path.to_path_buf(),
         Some(ext) if opened_ext.as_ref() == Some(&ext) => path.with_extension(first),
-        Some(ext) if SAVE_FILTERS.iter().chain(OTHER_SAVE_FILTERS).any(|(_, exts)| exts.contains(&ext.as_str())) => path.to_path_buf(),
+        Some(ext)
+            if save_filters("").iter().any(|(_, exts)| exts.contains(&ext)) || OTHER_SAVE_FILTERS.iter().any(|(_, exts)| exts.contains(&ext.as_str())) =>
+        {
+            path.to_path_buf()
+        }
         _ => {
             let mut name = path.as_os_str().to_owned();
             name.push(".");
@@ -956,6 +960,18 @@ mod tests {
         assert_eq!(filters.iter().any(|(_, exts)| exts.iter().any(|e| e == "avif")), photocraft_codecs::Format::Avif.caps().write);
         if photocraft_codecs::Format::Avif.caps().write {
             assert_eq!(save_filters("image.avif")[0], ("AVIF".into(), vec!["avif".into()]));
+        }
+    }
+
+    #[test]
+    fn a_typed_avif_extension_overrides_the_picked_type_only_with_an_encoder() {
+        for picked in ["psd", "png"] {
+            for name in ["image.avif", "image.AVIF"] {
+                let path = Path::new(name);
+                let result = with_chosen_type(path, Some("Untitled.psd"), &[picked.into()]);
+                let expected = if photocraft_codecs::Format::Avif.caps().write { path.to_path_buf() } else { PathBuf::from(format!("{name}.{picked}")) };
+                assert_eq!(result, expected, "{name} with {picked} picked");
+            }
         }
     }
 

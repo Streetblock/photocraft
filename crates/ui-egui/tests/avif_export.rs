@@ -80,6 +80,9 @@ fn avif_limits_and_size_note_are_localized_in_every_language() {
         h.state_mut().session.prefs.edit(|p| p.interface.language = lang.code().into());
         h.run_steps(4);
         for label in ["Quality", "Transparency", LIMITS, SIZE_NOTE] {
+            if lang.code() != "en" {
+                assert!(i18n::has(lang, label), "{}: missing translation for {label}", lang.code());
+            }
             assert!(h.query_by_label(i18n::tr(lang, label)).is_some(), "{}: {label}", lang.code());
         }
     }
