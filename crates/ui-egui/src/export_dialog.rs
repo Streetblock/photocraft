@@ -15,6 +15,7 @@ use crate::{ExportSettings, PhotocraftApp};
 
 const FORMATS: [(&str, &str); 7] = [("png", "PNG"), ("jpg", "JPG"), ("webp", "WebP"), ("avif", "AVIF"), ("tif", "TIFF"), ("tga", "TGA"), ("ico", "ICO")];
 
+/// Export As formats available in this build; AVIF is offered only with its encoder enabled.
 fn format_options() -> Vec<(String, &'static str)> {
     FORMATS.iter().filter(|(ext, _)| *ext != "avif" || photocraft_codecs::Format::Avif.caps().write).map(|(ext, label)| (ext.to_string(), *label)).collect()
 }
@@ -388,6 +389,8 @@ fn tga_bits(f: &Map<String, Value>) -> Option<photocraft_io::TgaBits> {
     s(f, "tgaBits").parse().ok().and_then(photocraft_io::TgaBits::from_bits)
 }
 
+/// Map saved dialog choices to effective export options. AVIF shares JPEG's quality scale,
+/// while disabling ICC and metadata embedding without changing the saved choices.
 fn settings(f: &Map<String, Value>) -> ExportSettings {
     let fmt = s_fmt(f);
     let quality = n(f, "quality", 85.0).clamp(1.0, 100.0) as u8;
@@ -441,11 +444,14 @@ struct PreviewPixels {
     rgba: Vec<u8>,
 }
 
+/// Render a prepared proxy into RGBA8 pixels with an optional encoded-size estimate.
 fn preview_pixels(proxy: &Document, estimate: Option<u64>, fmt: &str) -> PreviewPixels {
     let img = preview_image(proxy, fmt);
     PreviewPixels { estimate, width: img.width as usize, height: img.height as usize, rgba: img.pixels }
 }
 
+/// Prepare the proxy, byte estimate and pixels synchronously. AVIF skips proxy encoding
+/// and displays a colour-managed source preview.
 fn preview_sync(app: &PhotocraftApp, doc: &Document, f: &Map<String, Value>) -> Result<PreviewPixels, String> {
     let proxy = preview_proxy(doc, f)?;
     Ok(preview_pixels(&proxy, estimate(app, doc, &proxy, f), &s_fmt(f)))
@@ -717,6 +723,8 @@ fn preset_fields(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String,
     }
 }
 
+/// Cache key for settings affecting preview pixels or size. AVIF's source preview depends
+/// on sizing and transparency; encoder-only settings do not invalidate it.
 fn preview_signature(f: &Map<String, Value>) -> String {
     let fmt = s_fmt(f);
     if fmt == "avif" {
@@ -747,6 +755,9 @@ fn preview_signature(f: &Map<String, Value>) -> String {
     )
 }
 
+/// Render a format-aware thumbnail without changing the document. AVIF applies RGB/gray
+/// profile conversion and duotone inks before quantization, retaining transparency;
+/// CMYK/Lab composites are already sRGB.
 fn preview_image(doc: &Document, fmt: &str) -> photocraft_raster::Rgba8Image {
     use photocraft_cms::{Builtin, ColorSpace, Intent, Transform};
     use photocraft_doc::ColorMode;
@@ -796,6 +807,8 @@ fn preview_image(doc: &Document, fmt: &str) -> photocraft_raster::Rgba8Image {
     buf.to_rgba8()
 }
 
+/// Draw Export As settings and the cached preview. AVIF shows fixed colour and metadata
+/// limits without changing saved choices, and reports file size after the final export.
 pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Value>) {
     let t = Tokens::get(ui.ctx());
     let Some(doc) = app.session.active().map(|s| s.doc.clone()) else { return };
@@ -839,16 +852,12 @@ pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Valu
                 crate::widgets::checkbox(ui, &mut tr, tl!("Transparency"));
                 f.insert("transparency".into(), json!(tr));
             }
-            if fmt == "avif" {
-                f.insert("metadata".into(), json!("none"));
-                f.insert("embedProfile".into(), json!(false));
-            }
             ui.add_enabled_ui(fmt != "avif", |ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(tl!("Metadata")).color(t.text_dim));
-                    let mut m = s(f, "metadata");
+                    let mut m = if fmt == "avif" { "none".into() } else { s(f, "metadata") };
                     let opts: Vec<(String, &str)> = vec![("none".into(), tl!("None")), ("exif".into(), tl!("EXIF")), ("all".into(), tl!("All"))];
-                    if crate::widgets::dropdown(ui, "export-metadata", &mut m, &opts, 130.0) {
+                    if crate::widgets::dropdown(ui, "export-metadata", &mut m, &opts, 130.0) && fmt != "avif" {
                         f.insert("metadata".into(), json!(m));
                     }
                 });
@@ -863,9 +872,11 @@ pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Valu
                         f.insert("profile".into(), json!(profile));
                     }
                 });
-                let mut embed = f.get("embedProfile").and_then(Value::as_bool).unwrap_or(true);
+                let mut embed = fmt != "avif" && f.get("embedProfile").and_then(Value::as_bool).unwrap_or(true);
                 crate::widgets::checkbox(ui, &mut embed, tl!("Embed Color Profile"));
-                f.insert("embedProfile".into(), json!(embed));
+                if fmt != "avif" {
+                    f.insert("embedProfile".into(), json!(embed));
+                }
             });
             if fmt == "avif" {
                 ui.add_space(4.0);

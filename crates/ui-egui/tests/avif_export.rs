@@ -29,6 +29,7 @@ fn fixture(theme: ThemeKind, size: egui::Vec2, gpu: bool) -> Harness<'static, Ph
         let fields = &mut app.ui.dialog_mut(id).unwrap().fields;
         fields.insert("format".into(), json!("avif"));
         fields.insert("metadata".into(), json!("all"));
+        fields.insert("embedProfile".into(), json!(true));
         app
     });
     h.run_steps(4);
@@ -51,7 +52,10 @@ fn avif_controls_render_in_every_theme_and_fit_the_dialog() {
                 assert!(rect.left() >= 0.0 && rect.right() <= size.x && rect.top() >= 0.0 && rect.bottom() <= size.y, "{name} {size:?}: {label} overflows");
             }
             assert!(h.get_by_value("None").accesskit_node().is_disabled(), "AVIF cannot preserve metadata");
-            assert_eq!(h.state().ui.dialogs[0].fields["metadata"], "none");
+            let embed = h.get_by_label("Embed Color Profile");
+            assert!(embed.accesskit_node().is_disabled(), "AVIF cannot embed ICC profiles");
+            assert_eq!(h.state().ui.dialogs[0].fields["metadata"], "all", "drawing AVIF preserves the requested metadata");
+            assert_eq!(h.state().ui.dialogs[0].fields["embedProfile"], true, "drawing AVIF preserves the requested ICC setting");
             if let Some(dir) = &snapshots {
                 let dir = std::path::Path::new(dir);
                 std::fs::create_dir_all(dir).unwrap();
@@ -84,6 +88,84 @@ fn avif_limits_and_size_note_are_localized_in_every_language() {
                 assert!(i18n::has(lang, label), "{}: missing translation for {label}", lang.code());
             }
             assert!(h.query_by_label(i18n::tr(lang, label)).is_some(), "{}: {label}", lang.code());
+        }
+    }
+}
+
+fn select_format(h: &mut Harness<'static, PhotocraftApp>, current: &str, next: &str) {
+    h.get_by_value(current).click();
+    h.run_steps(3);
+    h.get_by_label(next).click();
+    h.run_steps(3);
+}
+
+#[test]
+fn avif_retains_metadata_and_profile_choices_for_other_formats_presets_and_reopening() {
+    for (format, label) in [("png", "PNG"), ("jpg", "JPG"), ("tif", "TIFF"), ("webp", "WebP")] {
+        for metadata in ["all", "exif"] {
+            for embed_profile in [true, false] {
+                let mut h = fixture(ThemeKind::Pro, vec2(1440.0, 900.0), false);
+                let id = h.state().ui.dialogs[0].id;
+                {
+                    let fields = &mut h.state_mut().ui.dialog_mut(id).unwrap().fields;
+                    fields.insert("format".into(), json!(format));
+                    fields.insert("metadata".into(), json!(metadata));
+                    fields.insert("embedProfile".into(), json!(embed_profile));
+                }
+                h.run_steps(3);
+                select_format(&mut h, label, "AVIF");
+                assert_eq!(h.state().ui.dialogs[0].fields["metadata"], metadata);
+                assert_eq!(h.state().ui.dialogs[0].fields["embedProfile"], embed_profile);
+                assert!(h.get_by_value("None").accesskit_node().is_disabled());
+                let embed = h.get_by_label("Embed Color Profile");
+                assert!(embed.accesskit_node().is_disabled());
+
+                // Save through the real preset controls after AVIF has drawn several frames.
+                h.get_by_label("Save Preset…").click();
+                h.run_steps(3);
+                h.get_by_label("Preset Name").click();
+                h.run_steps(2);
+                h.get_by_label("Preset Name").type_text("Retained settings");
+                h.run_steps(3);
+                h.get_by_label("Save").click();
+                h.run_steps(3);
+                let saved = h.state_mut().session.execute("file.export.presets.get", json!({"name": "Retained settings"})).unwrap();
+                assert_eq!(saved["preset"]["settings"]["format"], "avif");
+                assert_eq!(saved["preset"]["settings"]["metadata"], metadata);
+                assert_eq!(saved["preset"]["settings"]["embedProfile"], embed_profile);
+
+                // Confirm remembers the requested choices even when the save picker is cancelled.
+                let fields = h.state().ui.dialogs[0].fields.clone();
+                h.state_mut().services.file_dialog = Some(Box::new(|_, _, reply| reply.send(None)));
+                export_dialog::confirm(h.state_mut(), &fields).unwrap();
+                let ctx = h.ctx.clone();
+                h.state_mut().poll_file_dialog(&ctx, None);
+                assert!(!h.state().file_dialog_open());
+                {
+                    let app = h.state_mut();
+                    let remembered = &app.session.prefs().dialogs["file.export.exportAs"];
+                    assert_eq!(remembered["metadata"], metadata);
+                    assert_eq!(remembered["embedProfile"], embed_profile);
+                    let raw = app.session.prefs_to_json();
+                    app.ui.close_dialog(id).unwrap();
+                    app.session.prefs.edit(|p| p.dialogs.clear());
+                    app.session.load_prefs_json(&raw).unwrap();
+                    export_dialog::open(app).unwrap();
+                }
+                h.run_steps(3);
+                assert_eq!(h.state().ui.dialogs[0].fields["format"], "avif");
+                assert_eq!(h.state().ui.dialogs[0].fields["metadata"], metadata);
+                assert_eq!(h.state().ui.dialogs[0].fields["embedProfile"], embed_profile);
+
+                select_format(&mut h, "AVIF", label);
+                assert_eq!(h.state().ui.dialogs[0].fields["format"], format);
+                assert_eq!(h.state().ui.dialogs[0].fields["metadata"], metadata);
+                assert_eq!(h.state().ui.dialogs[0].fields["embedProfile"], embed_profile);
+                let shown_metadata = if metadata == "all" { "All" } else { "EXIF" };
+                assert!(!h.get_by_value(shown_metadata).accesskit_node().is_disabled());
+                let embed = h.get_by_label("Embed Color Profile");
+                assert!(!embed.accesskit_node().is_disabled());
+            }
         }
     }
 }
@@ -135,6 +217,8 @@ fn confirming_avif_passes_quality_and_writes_the_selected_extension() {
     assert_eq!(received[0].2.jpeg_quality, Some(43));
     assert_eq!(received[0].2.webp_quality, None);
     assert!(!received[0].2.xmp_all);
+    assert!(!received[0].2.embed_icc);
+    assert!(!received[0].2.embed_metadata);
     assert_eq!(written.lock().unwrap().as_slice(), &[("sample.avif".into(), vec![1; 2400])]);
     assert!(app.ui.status.contains("sample.avif"));
     assert!(app.ui.status.contains("(2K)"), "warnings preserve the exported file size in the status");
